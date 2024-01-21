@@ -1,0 +1,207 @@
+1. Create twp Iam Policy using
+1a. Go IAM Servic
+    On the left side menu click on "Policy" and click on "create Policy"
+    Selcect "Json" past the "Disk_MOdification_IAM_Policy_EC2.json" code and click on "Next"
+    Give Policy Name and Description "Disk_MOdification_IAM_Policy_EC2" and click on "Create Policy"
+
+Disk_MOdification_IAM_Policy_EC2.json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "CloudWatchMetricsPermissions",
+            "Effect": "Allow",
+            "Action": [
+                "cloudwatch:PutMetricData",
+                "cloudwatch:GetMetricData",
+                "cloudwatch:ListMetrics"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "EC2DescribePermissions",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeTags",
+                "ec2:DescribeInstances"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+
+1b. Go IAM Servic
+    On the left side menu click on "Policy" and click on "create Policy"
+    Selcect "Json" past the "Disk_MOdification_IAM_Policy_Lambda.json" code and click on "Next"
+    Give Policy Name and Description "Disk_MOdification_IAM_Policy_Lambda" and click on "Create Policy"
+
+Disk_MOdification_IAM_Policy_Lambda.json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "EC2LimitedPermissions",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeInstances",
+                "ec2:DescribeVolumes",
+                "ec2:ModifyVolume"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "SSMLimitedPermissions",
+            "Effect": "Allow",
+            "Action": [
+                "ssm:SendCommand",
+                "ssm:GetCommandInvocation"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "LogsPermissions",
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "CloudWatchReadOnly",
+            "Effect": "Allow",
+            "Action": [
+                "cloudwatch:Describe*",
+                "cloudwatch:Get*",
+                "cloudwatch:List*"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+
+
+2. CReate 2 IAM Roles 
+
+2a. Go IAM Servic
+    On the left side menu click on roles and click on create roles
+    under "Trusted entity type" select "AWS service"
+    under "Use case" select "EC2" and click on next
+    Search for "Disk_MOdification_IAM_Policy_EC2" Polacy and select and click "Next"
+    Give Role Name and Description "Disk_MOdification_IAM_Role_EC2" and click on "Create Role"
+
+2b. Go IAM Servic
+    On the left side menu click on roles and click on create roles
+    under "Trusted entity type" select "AWS service"
+    under "Use case" select "Lambda" and click on next
+    Search for "Disk_MOdification_IAM_Policy_Lambda" Polacy and select and click "Next"
+    Give Role Name and Description "Disk_MOdification_IAM_Role_Lambda" and click on "Create Role"
+
+
+3. creatre EC2 Instance 
+
+Go to EC2 service
+Click on "Launch Instance"
+
+Fill the details
+
+Name: Disk_Modification_test
+click on "Add additional tags"
+Key: org   Valule: test
+AMI: Amazon Linux 2023 AMI
+Instance type: t2.micro
+Key pair: Test Key
+Network settings: default SG 
+Click on "Advanced details"
+IAM instance profile: Disk_MOdification_IAM_Role_EC2
+UserData
+
+AWS_CloudWatch_Agent_Setup.sh
+#!/bin/bash
+# Download and install the Amazon CloudWatch Agent
+wget https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm
+rpm -U ./amazon-cloudwatch-agent.rpm
+
+# Create the CloudWatch Agent configuration file
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << EOF
+{
+  "agent": {
+    "metrics_collection_interval": 60,
+    "run_as_user": "cwagent"
+  },
+  "metrics": {
+    "append_dimensions": {
+      "InstanceId": "\${aws:InstanceId}",
+      "InstanceType": "\${aws:InstanceType}",
+      "AutoScalingGroupName": "\${aws:AutoScalingGroupName}",
+      "DiskId": "\${aws:ResourceTag/DiskId}"
+    },
+    "metrics_collected": {
+      "disk": {
+        "measurement": [
+          "used_percent"
+        ],
+        "resources": [
+          "/"
+        ],
+        "include_fs": ["/dev/xvda1"]
+      }
+    }
+  }
+}
+EOF
+
+# Start and enable the CloudWatch Agent service
+systemctl start amazon-cloudwatch-agent
+systemctl enable amazon-cloudwatch-agent
+
+
+Click on "Launch Instance"
+
+
+4. Create AWS Lambda Function  and AWS Lambda Layer
+
+4a. Create layer 
+Go to AWS Lambda Function service, on the left side under Additional resources select Layer and click on create layer
+Give Name and Description "Requestes_later"
+upolad the requests-layer_3.11.zip 
+select the Compatible runtimes as "Python 3.11"
+click on "Create"
+
+4b. Create Function 
+Go to AWS Lambda Function service and click on "Create Function"
+Give Function Name "Disk_Modification_Lambda_Function"
+Select Runtime "Python 3.11"
+under "Change default execution role" select and Use an existing role and select "Disk_MOdification_IAM_Role_Lambda"
+CLick "Create Function"
+Go the cretae function 
+under code > lambda_function.py, add the Disk_Modification.py code and click on "Deploy"
+scroll down under "Layers" click on "Add a Layer"
+select "Custom layers" and select "requests-layer" and choose the version "1"
+and click on "Add"
+Go to Configuration > General configuration, click on "Edit"
+change memory to "Memory" and Timeout to "15 min 0 sec" and click on "save"
+
+
+5. Create SNS topic and subscription
+
+go to Amazon SNS
+on the left side select Topic and click on create topic
+Select "Standard"
+Give name and DIsplay name "Disk_Modification_Topic" and click on craete topic
+Go to the create topic and click on "Create subscription"
+select teh "Protocol" as "AWS Lambda"
+in the pond copy the created Lambda function abd give it 
+and click on create subscription
+
+6. CReating Cloudwatch alaram
+
+go to CloudWatch service and in the left hand side select "All alarm" and click on "Create alaram"
+click on "select metric"
+click on "CWAgent" and click on "InstanceId, InstanceType, device, fstype, path"
+Select the metric with Instance name Disk_Modification_test and click on "select metric"
+Change the Periodto 30s and "than… Define the threshold value." to 80 and click on "Next"
+under "Send a notification to…" selet "Disk_Modification_Topic" and click on "Next"
+Give the Alarm name "DiskModificationAlert_i-09a0065b04d4fb011_vol-0f6f0ae8a077ad262" and click on "Next"
+then click on "Create alarm"
